@@ -3,7 +3,6 @@
 #include <Adafruit_RGBLCDShield.h>
 
 boolean lcdSectorRGBShieldFactory::initialized;
-Adafruit_RGBLCDShield lcdSectorRGBShieldFactory::lcd;
 
 const unsigned int lcdSector::getX(void) {return x;}
 const unsigned int lcdSector::getY(void) {return y;}
@@ -20,6 +19,7 @@ lcdSector::lcdSector(
     const unsigned int j
   ) {
   page = p;
+  p->addSector(this);
   x = x1;
   y = y1;
   width = w;
@@ -30,11 +30,11 @@ lcdSector::lcdSector(
 }
 
 void lcdSector::activePrint(void) {
-  Serial.print("Printing \"");
-  Serial.print(buffer);
-  Serial.print("\" using format string - ");
-  Serial.println(format);
   if(page->pageActive()) {
+    Serial.print("Printing \"");
+    Serial.print(buffer);
+    Serial.print("\" using format string - ");
+    Serial.println(format);
     print();
   }
 }
@@ -100,6 +100,9 @@ const unsigned int lcdPage::getWidth(void) {return width;}
 const unsigned int lcdPage::getHeight(void) {return height;}
 
 void lcdPage::activatePage(void) {
+  if(!activePage) {
+    printPage();
+  }
   activePage = true;
 }
 
@@ -108,6 +111,7 @@ void lcdPage::deactivatePage(void) {
 }
 
 void lcdPage::printPage(void) {
+  Serial.println(activePage);
   sectorList *current = sectors;
   while(current) {
     current->sector->print();
@@ -123,12 +127,20 @@ lcdPage::lcdPage(const unsigned int w, const unsigned int h) {
 }
 
 void lcdPage::addSector(lcdSector *s) {
-  if(((s->getX() + s->getWidth()) < width) && (s->getY() < height)) {
-    sectorList *current = sectors;
-    sectors = new sectorList;
-    sectors->sector = s;
-    sectors->next = current;
+  sectorList *current = sectors;
+  sectors = new sectorList;
+  sectors->sector = s;
+  sectors->next = current;
+}
+
+const unsigned int lcdPage::numSectors(void) {
+  sectorList *current = sectors;
+  unsigned int n=0;
+  while(current) {
+    current = current->next;
+    n++;
   }
+  return n;
 }
 
 boolean lcdPage::pageActive(void) {
@@ -149,6 +161,7 @@ void lcdManager::addPage(const unsigned int id) {
   pages->page = new lcdPage(width, height);
   pages->pageID = id;
   pages->next = current;
+  Serial.println(id);
   if(!current) {
     pages->page->activatePage();
   }
@@ -156,13 +169,36 @@ void lcdManager::addPage(const unsigned int id) {
 
 void lcdManager::activatePage(const unsigned int id) {
   pageList *current = pages;
+  pageList *currentlyActive = 0;
+  pageList *pageWithID = 0;
   while(current) {
     if(current->pageID == id) {
-      current->page->activatePage();
-    } else {
-      current->page->deactivatePage();
+      pageWithID = current;
     }
+
+    if(current->page->pageActive()) {
+      currentlyActive = current;
+    }
+
+    current = current->next;
   }
+  
+  if(pageWithID && !pageWithID->page->pageActive()) {
+    currentlyActive->page->deactivatePage();
+    pageWithID->page->activatePage();
+  }
+}
+
+int lcdManager::activePage(void) {
+  pageList *current = pages;
+  while(current) {
+    if(current->page->pageActive()) {
+      return current->pageID;
+    }
+    current = current->next;
+  }
+  
+  return -1;
 }
 
 lcdSector *lcdManager::addSector(
@@ -182,14 +218,57 @@ lcdSector *lcdManager::addSector(
   return 0;
 }
 
+unsigned int lcdManager::numSectors(unsigned int id) {
+  pageList *current = pages;
+  while(current) {
+    if(current->pageID == id) {
+      return current->page->numSectors();
+    } else {
+      current = current->next;
+    }
+  }
+
+  return 0;
+}
+
+unsigned int lcdManager::numPages(void) {
+  pageList *current = pages;
+  unsigned int n = 0;
+  while(current) {
+    current = current->next;
+    n++;
+  }
+
+  return n;
+}
+
+void lcdManager::turnOff(void) {
+  factory->turnOff();
+}
+
+void lcdManager::turnOn(void) {
+  factory->turnOn();
+}
+
 lcdSectorRGBShieldFactory::lcdSectorRGBShieldFactory(
   const unsigned int width, 
-  const unsigned int height) {
+  const unsigned int height,
+  Adafruit_RGBLCDShield *l) {
   if(!initialized) {
-    lcd = Adafruit_RGBLCDShield();
+    lcd = l;
     initialized = true;
-    lcd.begin(width,height);
+    lcd->begin(width,height);
   }
+}
+
+void lcdSectorRGBShieldFactory::turnOff(void) {
+  lcd->noDisplay();
+  lcd->setBacklight(0x0);
+}
+
+void lcdSectorRGBShieldFactory::turnOn(void) {
+  lcd->display();
+  lcd->setBacklight(0x7);
 }
 
 lcdSector *lcdSectorRGBShieldFactory::createSector(
@@ -197,7 +276,7 @@ lcdSector *lcdSectorRGBShieldFactory::createSector(
     const unsigned int y,
     const unsigned int w,
     lcdPage *p) {
-  return new lcdSectorRGBShield(x,y,w,p,&lcd);
+  return new lcdSectorRGBShield(x,y,w,p,lcd);
 }
 
 lcdSectorRGBShield::lcdSectorRGBShield(

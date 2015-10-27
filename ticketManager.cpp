@@ -1,5 +1,6 @@
 #include "ticketManager.h"
 #include <Time.h>
+#include <TimeAlarms.h>
 
 // If using the breakout with SPI, define the pins for SPI communication.
 #define PN532_SCK  (2)
@@ -31,8 +32,6 @@ ticketManager::ticketManager(void) {
   }  
   // configure board to read RFID tags
   nfc->SAMConfig();
-  
-  Serial.println("Waiting Card ...");
 }
 
 uint8_t ticketManager::getCardType(void) {
@@ -66,7 +65,7 @@ uint8_t ticketManager::waitForCard(void) {
     // Now we need to try to authenticate it for read/write access
     // Try with the factory default KeyA: 0xFF 0xFF 0xFF 0xFF 0xFF 0xFF
     Serial.println("Trying to authenticate block 4 with default key value");
-    uint8_t key[6] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+    
   
     // Start with block 4 (the first block of sector 1) since sector 0
     // contains the manufacturer data and it's probably better just
@@ -80,8 +79,33 @@ uint8_t ticketManager::waitForCard(void) {
   return success;
 }
 
+boolean ticketManager::readData(void) {
+  unsigned int retries = 0;
+  do {
+    success = nfc->mifareclassic_ReadDataBlock(4, data);
+    if(!success) {
+      retries++;
+      Alarm.delay(1);
+    }
+  } while(!success && retries < 10);
+  return success;
+}
+
+boolean ticketManager::writeData(void) {
+  unsigned int retries = 0;
+  do {
+    success = nfc->mifareclassic_WriteDataBlock(4, data);
+    if(!success) {
+      retries++;
+      Alarm.delay(1);
+    }
+  } while(!success && retries < 10);
+  return success;
+}
+
 uint8_t ticketManager::getTickets(void) {
-  success = nfc->mifareclassic_ReadDataBlock(4, data);
+  unsigned int retries = 0;
+  readData();
   return success ? data[0] : -1;
 }
 
@@ -110,23 +134,20 @@ unsigned long ticketManager::getLastSwipeDate(void) {
   return success ? timeEpoch : 0;
 }
 
-uint8_t ticketManager::addTickets(uint8_t t) {
-  success = nfc->mifareclassic_ReadDataBlock(4, data);
-  if(success) {
-    data[0] += t;
-    addTicketDate();
-    success = nfc->mifareclassic_WriteDataBlock(4, data);
-  }
-  return success ? data[0] : -1;
+boolean ticketManager::addTickets(uint8_t t) {
+  int c = getTickets();
+  data[0] = c+t;
+  addTicketDate();
+  return writeData();
 }
 
-uint8_t ticketManager::removeTickets(uint8_t t) {
-  success = nfc->mifareclassic_ReadDataBlock(4, data);
-  if(success && data[0] > 0) {
-    data[0] -= t;
+boolean ticketManager::subtractTickets(uint8_t t) {
+  int c = getTickets();
+  if(c - t >= 0) {
+    data[0] = c - t;
     addTicketDate();
-    success = nfc->mifareclassic_WriteDataBlock(4, data);
+    return writeData();
   }
-  return success ? data[0] : -1;
+  return false;
 }
 

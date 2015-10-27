@@ -52,6 +52,7 @@ class lcdSector {
 class lcdPage {
   
   friend lcdManager;
+  friend lcdSector;
   
   private:
     struct sectorList {
@@ -74,6 +75,7 @@ class lcdPage {
   const unsigned int getWidth(void);
   const unsigned int getHeight(void);
   boolean pageActive(void);
+  const unsigned int numSectors(void);
 };
 
 class lcdManager {
@@ -82,7 +84,7 @@ class lcdManager {
   
     struct pageList {
       lcdPage *page;
-      unsigned int pageID;
+      int pageID;
       pageList *next;
     } *pages;
 
@@ -96,16 +98,23 @@ class lcdManager {
       lcdFactory *factory);
     void addPage(const unsigned int pageID);
     void activatePage(const unsigned int pageID);
+    int activePage(void);
     lcdSector *addSector(
       const unsigned int x,
       const unsigned int y,
       const unsigned int width,
       const unsigned int pageID);
+    unsigned int numSectors(const unsigned int pageID);
+    unsigned int numPages(void);
+    void turnOff(void);
+    void turnOn(void);
 };
 
 class lcdFactory {
   friend lcdManager;
-  
+
+  virtual void turnOff(void) = 0;
+  virtual void turnOn(void) = 0;
   virtual lcdSector *createSector(
     const unsigned int x, 
     const unsigned int y,
@@ -115,11 +124,17 @@ class lcdFactory {
 
 class lcdSectorRGBShieldFactory:public lcdFactory {
   private:
-    static Adafruit_RGBLCDShield lcd;
     static boolean initialized;
+    Adafruit_RGBLCDShield *lcd;
+    
   public:
   
-  lcdSectorRGBShieldFactory(const unsigned int width, const unsigned int height);
+  lcdSectorRGBShieldFactory(
+    const unsigned int width,
+    const unsigned int height,
+    Adafruit_RGBLCDShield *lcd);
+  void turnOff(void);
+  void turnOn(void);
   lcdSector *createSector(
     const unsigned int x, 
     const unsigned int y,
