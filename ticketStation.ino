@@ -5,8 +5,8 @@
 #include <Time.h>
 #include <TimeAlarms.h>
 #include <LiquidCrystal.h>
-#include "ticketManager.h"
-#include "lcdManager.h"
+#include <ticketManager.h>
+#include <lcdManager.h>
 
 ticketManager *tm;
 lcdManager *screen;
@@ -16,11 +16,10 @@ lcdSector *lineThree;
 lcdSector *lineFour;
 lcdSector *lineFive;
 lcdSector *lineSix;
-boolean authorized;
+boolean isAuthorized;
 boolean spendTickets;
 boolean idle;
-unsigned long lastSwiped;
-unsigned long lastPressed;
+unsigned long lastActive;
 unsigned int tickets;
 Adafruit_RGBLCDShield lcd = Adafruit_RGBLCDShield();
 
@@ -28,40 +27,34 @@ void setup(void) {
   Serial.begin(19200);
   tm = new ticketManager;
   setTime(1445181196);
-  lastSwiped = now();
-  lastPressed = now();
+  lastActive = now();
   idle=true;
   tickets = 0;
 
   Serial.println("Creating manager");
   screen = new lcdManager(16,2,new lcdSectorRGBShieldFactory(16,2,&lcd));
-  Serial.println("Adding first page");
   screen->addPage(0);
   lineOne = screen->addSector(0,0,16,0);
   lineTwo = screen->addSector(0,1,16,0);
-  lineOne->update("Waiting...");
-  lineTwo->update("Tap card now");
-  Serial.println("Adding second page");
   screen->addPage(1);
   lineThree = screen->addSector(0,0,16,1);
   lineFour = screen->addSector(0,1,16,1);
-  lineThree->update("Select # tickets");
-  lineFour->update("0");
-  
-  Serial.println(screen->numSectors(0));
-  Serial.println(screen->numSectors(1));
-  Serial.println(screen->numPages());
+  screen->addPage(2);
+  lineFive = screen->addSector(0,0,16,2);
+  lineSix = screen->addSector(0,1,16,2);
   reset();
   Serial.println("Let's get started");
 }
 
 void loop(void) {
   if(tm->waitForCard()) {
-    cardSwiped();
+    activity();
     if(screen->activePage() == 0) {
       screenOneActions();
     } else if(screen->activePage() == 1) {
       screenTwoActions();
+    } else if(screen->activePage() == 2) {
+      screenThreeActions();
     }
   }
 
@@ -72,34 +65,26 @@ void loop(void) {
 void screenOneActions(void) {
   if(tm->getCardType() == 1) {
     authorize();
-  } else if(authorized) {
+    lineOne->update("Authorized...");
+    lineTwo->update("Add a ticket");
+  } else if(authorized()) {
     addTickets();
   } else {
     displayTickets();
   }
 }
 
-unsigned int swipeSlowly(lcdSector *l) {
-  unsigned long t = tm->getTickets();
-  unsigned int currentPage = screen->activePage();
-  if(t == 255) {
-    l->update("Tap slowly...");
-  } else {
-    l->update(t);
-  }
-  return t;
-}
-
 void screenTwoActions(void) {
   if(tm->getCardType() != 1) {
     if(tickets > 0 && spendTickets) {
-      unsigned int t = swipeSlowly(lineFour);
+      unsigned int t = tapSlowly(lineFour);
       if(t != 255) {
         if(tm->subtractTickets(tickets)) {
           tickets = 0;
           spendTickets = false;
           lineThree->update("Purchased!");
-          swipeSlowly(lineFour);
+          lineFour->update("Congratulations!");
+          tapSlowly(lineFour);
         } else {
           spendTickets = false;
           tickets = 0;
@@ -111,47 +96,95 @@ void screenTwoActions(void) {
   }
 }
 
-void cardSwiped(void) {
-  lastSwiped = now();
+void screenThreeActions(void) {
+  if(tm->getCardType() == 1 && !authorized()) {
+    authorize();
+    lineFive->update("Authorized.");
+    lineSix->update("Swipe Blank");
+  } else if(tm->getCardType() == 0 && authorized()) {
+    tm->setCardType(1);
+    lineFive->update("Created new");
+    lineSix->update("master");
+    Alarm.delay(3000);
+    lineFive->update("Authorized...");
+    lineSix->update("Swipe Blank");
+  } else if(tm->getCardType() != 0 && authorized()) {
+    lineFive->update("Card is not");
+    lineSix->update("a blank.");
+    Alarm.delay(3000);
+    lineFive->update("Authorized...");
+    lineSix->update("Swipe Blank");
+  } else if(tm->getCardType() == 0 && !authorized()) {
+    lineFive->update("First swipe");
+    lineSix->update("a master card");
+    Alarm.delay(3000);
+    lineFive->update("New access card");
+    lineSix->update("Please authorize");
+  }
+}
+
+unsigned int tapSlowly(lcdSector *l) {
+  unsigned long t = tm->getTickets();
+  unsigned int currentPage = screen->activePage();
+  if(t == 255) {
+    l->update("Tap slowly...");
+  } else {
+    l->update(t);
+    Alarm.delay(3);
+  }
+  return t;
+}
+
+void activity(void) {
+  lastActive = now();
   screen->turnOn();
   idle = false;
 }
 
 void checkIdle(void) {
-  if(now() - lastSwiped > 5 && now() - lastPressed > 5 && !idle) {
+  unsigned long elapsed = now() - lastActive;
+  
+  if(elapsed > 10 && elapsed < 20) {
     screen->activatePage(0);
     reset();
     idle = true;
   }
 
-  if(now() - lastSwiped > 15 && now() - lastPressed > 15 && idle) {
+  if(now() - lastActive >= 20) {
     screen->turnOff();
   }
 }
 
 void reset(void) {
-  authorized = false;
+  resetAuthorization();
   spendTickets = false;
   tickets = 0;
   lineOne->update("Waiting...");
-  lineTwo->update("Tap card now");
+  lineTwo->update("Tap slowly...");
   lineThree->update("Select # tickets");
   lineFour->update("0");
+  lineFive->update("New access card");
+  lineSix->update("Please authorize");
+}
+
+void resetAuthorization(void) {
+    isAuthorized = false;
 }
 
 void authorize(void) {
-    authorized = true;
-    lineOne->update("Authorized...");
-    lineTwo->update("Add a ticket");
+    isAuthorized = true;
+}
+
+boolean authorized(void) {
+    return isAuthorized;
 }
 
 void addTickets(void) {
   if(screen->activePage() == 0) {
-    if(authorized) {
+    if(authorized()) {
       tm->addTickets();
-      authorized = false;
       lineOne->update("Added ticket!");
-      swipeSlowly(lineTwo);
+      tapSlowly(lineTwo);
     }
   }
 }
@@ -159,20 +192,19 @@ void addTickets(void) {
 void displayTickets(void) {
   if(screen->activePage() == 0) {
     lineOne->update("Your tickets...");
-    swipeSlowly(lineTwo);
+    tapSlowly(lineTwo);
   }
 }
 
 void checkButtons(void) {
   uint8_t buttons = lcd.readButtons();
   if(buttons) {
-    lastPressed = now();
-    idle = false;
+    activity();
     if(buttons & BUTTON_RIGHT) {
-      screen->activatePage(!screen->activePage());
+      screen->activatePage(screen->activePage() + 1 % 3);
       reset();
     } else if(buttons & BUTTON_LEFT) {
-      screen->activatePage(!screen->activePage());
+      screen->activatePage(screen->activePage() == 0 ? 2 : screen->activePage() % 3);
       reset();
     } else if(buttons & BUTTON_UP) {
       if(screen->activePage() == 1) {
